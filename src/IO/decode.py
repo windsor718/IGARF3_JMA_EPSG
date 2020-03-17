@@ -156,6 +156,91 @@ class DecodeGrib(object):
 """
 CHILD CLASS: Here you need to create your own classes in reference to your datasets.
 """
+class JMA_EPSG(DecodeGrib):
+
+    def __init__(self,config,year,mon,day,hour,eNum):
+        # Initialization in reference to the super class
+        DecodeGrib.__init__(self,year,mon,day,hour,eNum)
+
+        # Read a config file
+        initFile  = ConfigParser.SafeConfigParser()
+        initFile.read(config)
+
+        # Read from config
+        self.gtRoot        = str(initFile.get("Forcing","gtRoot"))
+        self.nRes          = float(initFile.get("Forcing","nRes"))
+        self.cRes          = str(initFile.get("Forcing","cRes"))
+        self.nlon          = int(initFile.get("Forcing","nlon"))
+        self.nlat          = int(initFile.get("Forcing","nlat"))
+        self.lon0          = float(initFile.get("Forcing","lon0"))
+        self.lat0          = float(initFile.get("Forcing","lat0"))
+        self.intpFlag      = initFile.getboolean("Forcing","interp")
+
+        # parameters to retrieve [scalar]
+        self.msmParaSets_scl = [("tp",":APCP"),("gpm",":HGT"),("t2",":TMP"),("rh",":RH"),("tcdc",":TCDC"),("prmsl",":PRMSL"),("vgrd",":VGRD:10"),("ugrd",":UGRD:10")]
+        # parameters to retriebe [vector]
+        self.msmParaSets_vct = [] # [[arg1,arg2,arg3],...,[arg1,arg2,arg3]]
+        
+        """
+             arg1: string. keys to extract vector fields which is used as the args of -match option in wgrib2.
+             arg2: tuple. the paramter your want. ("parameterName","parameterShortName (-match key)")
+             arg3: tuple. the parameter you want. ("parameterName","parameterShortName (-match key)")
+        """
+        
+        # set up diagnostic variables
+        self.set_vals()
+
+
+        # clean up fies.
+        self.rmFiles = [os.path.join(self.gtRoot,"jma_%04d%02d%02d%02d_e%02d*"%(self.year,self.mon,self.day,self.hour,self.eNum)),\
+        os.path.join(self.gtRoot,"tp_%04d%02d%02d%02d_e%02d*"%(self.year,self.mon,self.day,self.hour,self.eNum)),\
+        os.path.join(self.gtRoot,"rh_%04d%02d%02d%02d_e%02d*"%(self.year,self.mon,self.day,self.hour,self.eNum)),\
+        os.path.join(self.gtRoot,"t2_%04d%02d%02d%02d_e%02d*"%(self.year,self.mon,self.day,self.hour,self.eNum)),\
+        os.path.join(self.gtRoot,"gpm_%04d%02d%02d%02d_e%02d*"%(self.year,self.mon,self.day,self.hour,self.eNum)),\
+        os.path.join(self.gtRoot,"ugrd_%04d%02d%02d%02d_e%02d*"%(self.year,self.mon,self.day,self.hour,self.eNum)),\
+        os.path.join(self.gtRoot,"vgrd_%04d%02d%02d%02d_e%02d*"%(self.year,self.mon,self.day,self.hour,self.eNum)),\
+        os.path.join(self.gtRoot,"tcdc_%04d%02d%02d%02d_e%02d*"%(self.year,self.mon,self.day,self.hour,self.eNum))]
+        self.remove()
+
+
+    def decodeJMA_EPSG(self):
+        print "*"*80
+        print "jma_epsg grib2 Decoder:"
+        ft_init = ["00"]
+        ft_tail = ["08"]
+        for ft0, ft1 in zip(ft_init, ft_tail):
+            self.gPath = self.definePathToGrib(ft0, ft1)
+            for para in self.msmParaSets_scl:
+                self.retrieveParam = para[0]
+                self.paramKey      = para[1]
+                self.main("scalar")
+            for field in self.msmParaSets_vct:
+                self.vectorParam   = [field[1][0],field[2][0]]
+                self.vectorKey     = [field[1][1],field[2][1]]
+                self.fieldKey      = field[0]
+                print self.vectorParam,self.paramKey,self.fieldKey
+                self.main("vector")
+
+            subprocess.check_call(["gzip",self.gPath])
+
+        print "Finishing grib2 Decoder..."
+        print "*"*80
+
+
+    def definePathToGrib(self, ft0, ft1):
+        """
+        any required processes (e.g., downloading) to define the path to the grib file to decode.
+        """
+        gDir   = "/dias/data/gpv/%04d%02d/%04d%02d%02d/" % (self.year, self.mon, self.year, self.mon, seld.day)
+        sPath  = os.path.join(gDir,"Z__C_RJTD_%04d%02d%02d%02d0000_EPSW_GPV_Rgl_FD%s_%s_grib2.bin") % (self.year,self.mon,self.day,self.hour,ft0,ft1)
+
+        for e in range(eNum):
+            # split a grib file to a grib file for one ensemble
+            ePath = ""
+            pass
+
+            return ePath
+
 class ECMWF(DecodeGrib):
 
     def __init__(self,config,year,mon,day,hour,eNum):

@@ -81,7 +81,19 @@ class ConvGtool(object):
         return Q
 
 
-    def calcRadiation(self,pres,temp,d2,tcdc,lat_deg):
+    def calcSurfPressure(gpm,t2,prmsl):
+        denominator = (t2/0.0065*gpm)+1
+        coef = (1-1/denominator)**(-5.257)
+        sp = prmsl/coef
+        return sp
+
+
+    def calcRadiation(self,pres,temp,tcdc,lat_deg,rh=("D2", rhdata)):
+        """
+        Args:
+            rh (tuple): ("RH", ndarray) or ("D2", ndarray). If string is "D2",
+            rh will be calculated via tensen's eq.
+        """
         #parameters
         I    =   1365 #Wm-2
         SB   =   5.67*10**(-8)
@@ -104,14 +116,18 @@ class ConvGtool(object):
         while CumStep <= len(pres[:,0,0]):
             pres_mean= np.mean(pres[CumStep-tStep:CumStep],axis=0)
             temp_mean= np.mean(temp[CumStep-tStep:CumStep],axis=0)
-            d2_mean  = np.mean(d2[CumStep-tStep:CumStep],axis=0)
-            #rh_mean  = np.mean(rh[CumStep-tStep:CumStep],axis=0)
-            #lcdc_mean= np.mean(lcdc[CumStep-tStep:CumStep],axis=0)
             tcdc_mean=np.mean(tcdc[CumStep-tStep:CumStep],axis=0)
-
-            #E=6.11*10**(7.5*(temp_mean-273.15)/(237.3-273.15+temp_mean))
-            #Ep=E*rh_mean
-            Ep=self.TensensEq(d2_mean)
+            if rh[0] == "D2":
+                d2_mean  = np.mean(rh[1][CumStep-tStep:CumStep],axis=0)
+                Ep=self.TensensEq(d2_mean)
+            elif rh[0] == "RH":
+                rh_mean  = np.mean(rh[1][CumStep-tStep:CumStep],axis=0)
+                E=6.11*10**(7.5*(temp_mean-273.15)/(237.3-273.15+temp_mean))
+                Ep=E*rh_mean
+            else:
+                raise KeyError(rh[0])
+            #lcdc_mean= np.mean(lcdc[CumStep-tStep:CumStep],axis=0)
+    
             Tdew=(237.3*np.log10(Ep/6.108))/(7.5-np.log10(Ep/6.108))
             logpw=0.0312*Tdew-0.0963
             logtop=0.0315*Tdew-0.1836
@@ -236,6 +252,87 @@ class ConvGtool(object):
 """
 CHILD CLASS: dataset-wide modules.
 """
+class JMA_EPSG(ConvGtool):
+    """
+    For ECMWF.
+    """
+    def __init__(self,config,year,mon,day,hour,eNum):
+        ConvGtool.__init__(self,year,mon,day,hour,eNum)
+
+        ###Configuration
+        self.initFile = ConfigParser.SafeConfigParser()
+        self.initFile.read(config)
+
+        ###
+        self.xRes     =  int(self.initFile.get("Forcing","nlon")) #lon
+        self.yRes     =  int(self.initFile.get("Forcing","nlat")) #lat
+        self.nTme     =  int(self.initFile.get("Forcing","nTme")) #time
+        self.dT       =  int(self.initFile.get("Forcing","tRes"))
+        self.dZ       =  int(self.initFile.get("Forcing","dZ"))
+        self.GATM     =  str(self.initFile.get("Forcing","GATM"))
+
+        self.hRes     =  float(self.initFile.get("Forcing","nRes")) #degree
+        self.cRes     =  str(self.initFile.get("Forcing","cRes")) #suffix
+        self.lats     =  float(self.initFile.get("Forcing","lat0"))
+
+        self.dataRoot =  str(self.initFile.get("Forcing","gtRoot"))
+        self.outRoot  =  str(self.initFile.get("Forcing","gtRoot"))
+        
+        ###Edit if you need.
+        self.dataDir      =  self.dataRoot
+        self.outDir       =  self.outRoot+self.cRes+"/%04d/%02d/%02d/%02d" % (self.year,self.mon,self.day,self.hour)
+
+        self.varOutDict   =  {"tp":"PRCP","tcdc":"CCOVER","sp":"PS","t2":"T","ugrd":"U","vgrd":"V","SSRD":"SSRD","SLRD":"SLRD","Q":"Q"}
+        self.varNameDict  =  {"tp":"PRCP","tcdc":"CCOVER","sp":"PS","t2":"T","ugrd":"U","vgrd":"V","SSRD":"SSRD","SLRD":"SLRD","Q":"Q"}
+        self.varUnitDict  =  {"PRCP":"kg/m2/s","CCOVER":"kg/kg","PS":"hPa","T":"K","U":"m/s","V":"m/s","SSRD":"W/m2","SLRD":"W/m2","Q":"kg/kg"}
+
+        self.unitCf       =  {"tp":1./21600.,"tcdc":1./100.,"rh":1./100.,"t2":1.,"gpm":1.,"ugrd":1.,"vgrd":1.,"prmsl":1.} #unit conversion coefficient
+
+    
+    def jmaepsgToGtool(self):
+        
+        if os.path.exists(self.outDir) == False:
+            os.makedirs(self.outDir)
+
+        prcp = self.TP2PRCP(self.readWithUnitConv("tp"))
+        prmsl = self.readWithUnitConv("prmsl")
+        tcdc = self.readWithUnitConv("tcdc")
+        rh   = self.readWithUnitConv("rh")
+        t2   = self.readWithUnitConv("t2")
+        gpm   = self.readWithUnitConv("gpm")
+        ugrd = self.readWithUnitConv("ugrd")
+        vgrd = self.readWithUnitConv("vgrd")
+        sp = selc.calcSurfPressure(gpm, t2, prmsl)
+
+
+        lat_deg = self.calcLat2D()
+        ssrd,slrd = self.calcRadiation(sp,t2,d2,tcdc,lat_deg)
+
+        self.encodeGtool(prcp,"tp")
+        self.encodeGtool(tcdc,"tcdc")
+        self.encodeGtool(sp,"sp")
+        self.encodeGtool(t2,"t2")
+        self.encodeGtool(ugrd,"ugrd")
+        self.encodeGtool(vgrd,"vgrd")
+        self.encodeGtool(ssrd,"SSRD")
+        self.encodeGtool(slrd,"SLRD")
+        self.encodeGtool(rh,"Q")
+
+        return 0
+
+        
+    def TP2PRCP(self,TP):
+        tRes = TP.shape[0]
+        t = 0
+        PRCP = np.zeros((TP.shape[0]-1,TP.shape[1],TP.shape[2],TP.shape[3]))
+        while t < TP.shape[0]-1:
+            crntData = TP[t]
+            nextData = TP[t+1]
+            product  = nextData - crntData
+            PRCP[t]  = product
+            t = t+1
+        return PRCP
+
 
 class ECMWF(ConvGtool):
     """
